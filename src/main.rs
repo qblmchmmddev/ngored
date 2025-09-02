@@ -1,5 +1,3 @@
-use crossterm::terminal::enable_raw_mode;
-
 use crate::{app::App, ngored_error::NgoredError};
 
 #[cfg(feature = "dhat-heap")]
@@ -7,17 +5,19 @@ use crate::{app::App, ngored_error::NgoredError};
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
 mod app;
+mod component;
 mod ngored_error;
 
 #[tokio::main]
 async fn main() -> Result<(), NgoredError> {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
-
     #[cfg(debug_assertions)]
     {
+        use log::debug;
         tui_logger::init_logger(log::LevelFilter::Trace)?;
         tui_logger::set_default_level(log::LevelFilter::Debug);
+        debug!("App started")
     }
 
     let mut terminal = ratatui::init();
