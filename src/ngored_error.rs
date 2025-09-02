@@ -5,6 +5,7 @@ use tui_logger::TuiLoggerError;
 pub enum NgoredError {
     Logger(String),
     IO(String),
+    Send(String),
 }
 
 impl From<TuiLoggerError> for NgoredError {
@@ -19,5 +20,11 @@ impl From<TuiLoggerError> for NgoredError {
 impl From<std::io::Error> for NgoredError {
     fn from(value: std::io::Error) -> Self {
         NgoredError::IO(value.to_string())
+    }
+}
+
+impl<T> From<tokio::sync::mpsc::error::SendError<T>> for NgoredError {
+    fn from(value: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        NgoredError::Send(value.to_string())
     }
 }
