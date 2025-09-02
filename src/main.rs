@@ -1,10 +1,31 @@
+use crossterm::terminal::enable_raw_mode;
+
+use crate::{app::App, ngored_error::NgoredError};
+
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-fn main() {
+mod app;
+mod ngored_error;
+
+fn main() -> Result<(), NgoredError> {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
-    println!("Hello, world!");
+    #[cfg(debug_assertions)]
+    {
+        use log::debug;
+
+        tui_logger::init_logger(log::LevelFilter::Trace)?;
+        tui_logger::set_default_level(log::LevelFilter::Debug);
+        debug!("App Started");
+    }
+
+    let mut terminal = ratatui::init();
+    let app_result = App::new().run(&mut terminal);
+
+    ratatui::restore();
+
+    app_result
 }
