@@ -1,17 +1,17 @@
 use std::time::Duration;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind};
-use ratatui::{
-    DefaultTerminal, Frame,
-    widgets::{Paragraph, Widget},
-};
+use ratatui::{DefaultTerminal, Frame};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_stream::StreamExt;
 
 #[cfg(debug_assertions)]
 use crate::component::debug::DebugComponent;
 
-use crate::{component::Component, ngored_error::NgoredError};
+use crate::{
+    component::{Component, sublist::SublistComponent},
+    ngored_error::NgoredError,
+};
 
 pub enum AppEvent {
     Quit,
@@ -20,26 +20,28 @@ pub enum AppEvent {
     ToggleShowDebug,
 }
 pub struct App {
+    #[cfg(debug_assertions)]
+    show_debug: bool,
+    #[cfg(debug_assertions)]
+    debug_component: DebugComponent,
     running: bool,
     app_event_sender: Sender<AppEvent>,
     app_event_receiver: Receiver<AppEvent>,
-    #[cfg(debug_assertions)]
-    debug_component: DebugComponent,
-    #[cfg(debug_assertions)]
-    show_debug: bool,
+    sublist: SublistComponent,
 }
 
 impl App {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel(100);
         Self {
-            running: true,
-            app_event_sender: sender,
-            app_event_receiver: receiver,
             #[cfg(debug_assertions)]
             debug_component: DebugComponent::new(),
             #[cfg(debug_assertions)]
             show_debug: false,
+            running: true,
+            sublist: SublistComponent::new(sender.clone()),
+            app_event_sender: sender,
+            app_event_receiver: receiver,
         }
     }
 
@@ -95,10 +97,8 @@ impl App {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
-        let area = frame.area();
-        let buf = frame.buffer_mut();
-        Paragraph::new("Hello, world!").render(area, buf);
+    fn draw(&mut self, frame: &mut Frame) {
+        self.sublist.draw(frame);
     }
 
     async fn handle_event(&mut self, event: &Event) -> Result<(), NgoredError> {
@@ -119,12 +119,16 @@ impl App {
                     .send(AppEvent::ToggleShowDebug)
                     .await?
             }
-            _ =>
-            {
+            _ => {
                 #[cfg(debug_assertions)]
                 if self.show_debug {
                     self.debug_component.handle_key_press(code).await?;
+                } else {
+                    self.sublist.handle_key_press(code).await?;
                 }
+
+                #[cfg(not(debug_assertions))]
+                self.sublist.handle_key_press(code).await?;
             }
         }
         Ok(())

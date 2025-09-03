@@ -48,7 +48,7 @@ impl Component for DebugComponent {
         Ok(())
     }
 
-    fn draw(&self, frame: &mut Frame) {
+    fn draw(&mut self, frame: &mut Frame) {
         use ratatui::widgets::{Block, Widget};
         use tui_logger::TuiLoggerWidget;
 
