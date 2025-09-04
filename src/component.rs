@@ -1,4 +1,4 @@
-use crossterm::event;
+use crossterm::event::Event;
 use ratatui::Frame;
 
 use crate::ngored_error::NgoredError;
@@ -9,10 +9,11 @@ pub mod debug;
 pub mod sublist;
 
 pub trait Component {
-    async fn handle_key_press(&mut self, code: event::KeyCode) -> Result<(), NgoredError> {
-        let _ = code;
+    async fn handle_event(&mut self, event: &Event) -> Result<(), NgoredError> {
+        let _ = event;
         Ok(())
     }
+
     fn draw(&mut self, frame: &mut Frame) {
         let _ = frame;
     }

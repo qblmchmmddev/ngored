@@ -1,5 +1,5 @@
-use crossterm::event::KeyCode;
-use log::{LevelFilter, debug};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use log::LevelFilter;
 use ratatui::Frame;
 use ratatui::text::Line;
 use tui_logger::{LogFormatter, TuiLoggerLevelOutput, TuiWidgetEvent, TuiWidgetState};
@@ -38,12 +38,19 @@ impl DebugComponent {
 }
 
 impl Component for DebugComponent {
-    async fn handle_key_press(&mut self, code: KeyCode) -> Result<(), NgoredError> {
-        match code {
-            KeyCode::Char('j') => self.state.transition(TuiWidgetEvent::NextPageKey),
-            KeyCode::Char('k') => self.state.transition(TuiWidgetEvent::PrevPageKey),
-            KeyCode::Esc => self.state.transition(TuiWidgetEvent::EscapeKey),
-            _ => debug!("{}", code),
+    async fn handle_event(&mut self, event: &Event) -> Result<(), NgoredError> {
+        match event {
+            Event::Key(KeyEvent {
+                code,
+                kind: KeyEventKind::Press,
+                ..
+            }) => match code {
+                KeyCode::Char('j') => self.state.transition(TuiWidgetEvent::NextPageKey),
+                KeyCode::Char('k') => self.state.transition(TuiWidgetEvent::PrevPageKey),
+                KeyCode::Esc => self.state.transition(TuiWidgetEvent::EscapeKey),
+                _ => {}
+            },
+            _ => {}
         }
         Ok(())
     }

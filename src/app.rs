@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crossterm::event::{Event, EventStream, KeyCode, KeyEventKind};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{DefaultTerminal, Frame};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_stream::StreamExt;
@@ -103,18 +103,16 @@ impl App {
 
     async fn handle_event(&mut self, event: &Event) -> Result<(), NgoredError> {
         match event {
-            Event::Key(key_event) if key_event.kind == KeyEventKind::Press => {
-                self.handle_key_press(key_event.code).await?
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    async fn handle_key_press(&mut self, code: KeyCode) -> Result<(), NgoredError> {
-        match code {
-            KeyCode::Char('q') => self.app_event_sender.send(AppEvent::Quit).await?,
-            KeyCode::Char('`') => {
+            Event::Key(KeyEvent {
+                kind: KeyEventKind::Press,
+                code: KeyCode::Char('q'),
+                ..
+            }) => self.app_event_sender.send(AppEvent::Quit).await?,
+            Event::Key(KeyEvent {
+                kind: KeyEventKind::Press,
+                code: KeyCode::Char('`'),
+                ..
+            }) => {
                 self.app_event_sender
                     .send(AppEvent::ToggleShowDebug)
                     .await?
@@ -122,9 +120,9 @@ impl App {
             _ => {
                 #[cfg(debug_assertions)]
                 if self.show_debug {
-                    self.debug_component.handle_key_press(code).await?;
+                    self.debug_component.handle_event(event).await?;
                 } else {
-                    self.sublist.handle_key_press(code).await?;
+                    self.sublist.handle_event(event).await?;
                 }
 
                 #[cfg(not(debug_assertions))]
