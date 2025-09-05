@@ -88,6 +88,15 @@ impl Component for SublistComponent {
                         }
                         self.app_event_sender.send(AppEvent::Draw).await?;
                     }
+                    KeyCode::Char('l') => {
+                        if let Some(selected_index) = self.list_state.selected() {
+                            if let Some(sub) = self.subs.get(selected_index) {
+                                self.app_event_sender
+                                    .send(AppEvent::OpenPostList(sub.clone()))
+                                    .await?;
+                            }
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}

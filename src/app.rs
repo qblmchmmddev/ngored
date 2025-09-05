@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{DefaultTerminal, Frame};
@@ -9,8 +9,9 @@ use tokio_stream::StreamExt;
 use crate::component::debug::DebugComponent;
 
 use crate::{
-    component::{Component, sublist::SublistComponent},
+    component::{Component, postlist::PostlistComponent, sublist::SublistComponent},
     ngored_error::NgoredError,
+    reddit_api::RedditApi,
 };
 
 pub enum AppEvent {
@@ -18,7 +19,15 @@ pub enum AppEvent {
     Draw,
     #[cfg(debug_assertions)]
     ToggleShowDebug,
+    OpenPostList(String),
+    ClosePostList,
 }
+
+pub enum Screen {
+    Sublist,
+    Postlist,
+}
+
 pub struct App {
     #[cfg(debug_assertions)]
     show_debug: bool,
@@ -27,11 +36,14 @@ pub struct App {
     running: bool,
     app_event_sender: Sender<AppEvent>,
     app_event_receiver: Receiver<AppEvent>,
+    current_screen: Screen,
     sublist: SublistComponent,
+    postlist: PostlistComponent,
 }
 
 impl App {
     pub fn new() -> Self {
+        let reddit_api = Arc::new(RedditApi::new());
         let (sender, receiver) = mpsc::channel(100);
         Self {
             #[cfg(debug_assertions)]
@@ -39,7 +51,9 @@ impl App {
             #[cfg(debug_assertions)]
             show_debug: false,
             running: true,
+            current_screen: Screen::Sublist,
             sublist: SublistComponent::new(sender.clone()),
+            postlist: PostlistComponent::new(reddit_api.clone(), sender.clone()),
             app_event_sender: sender,
             app_event_receiver: receiver,
         }
@@ -93,12 +107,24 @@ impl App {
                 self.show_debug = !self.show_debug;
                 self.app_event_sender.send(AppEvent::Draw).await?;
             }
+            AppEvent::OpenPostList(sub) => {
+                self.postlist.load(sub);
+                self.current_screen = Screen::Postlist;
+                self.app_event_sender.send(AppEvent::Draw).await?;
+            }
+            AppEvent::ClosePostList => {
+                self.current_screen = Screen::Sublist;
+                self.app_event_sender.send(AppEvent::Draw).await?;
+            }
         };
         Ok(())
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        self.sublist.draw(frame);
+        match self.current_screen {
+            Screen::Sublist => self.sublist.draw(frame),
+            Screen::Postlist => self.postlist.draw(frame),
+        }
     }
 
     async fn handle_event(&mut self, event: &Event) -> Result<(), NgoredError> {
@@ -122,11 +148,17 @@ impl App {
                 if self.show_debug {
                     self.debug_component.handle_event(event).await?;
                 } else {
-                    self.sublist.handle_event(event).await?;
+                    match self.current_screen {
+                        Screen::Sublist => self.sublist.handle_event(event).await?,
+                        Screen::Postlist => self.postlist.handle_event(event).await?,
+                    };
                 }
 
                 #[cfg(not(debug_assertions))]
-                self.sublist.handle_key_press(code).await?;
+                match self.current_screen {
+                    Screen::Sublist => self.sublist.handle_event(event).await?,
+                    Screen::Postlist => self.postlist.handle_event(event).await?,
+                };
             }
         }
         Ok(())

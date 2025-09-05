@@ -6,7 +6,9 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 
 mod app;
 mod component;
+mod model;
 mod ngored_error;
+mod reddit_api;
 
 #[tokio::main]
 async fn main() -> Result<(), NgoredError> {
