@@ -136,6 +136,7 @@ impl App {
                 code: KeyCode::Char('q'),
                 ..
             }) => self.app_event_sender.send(AppEvent::Quit).await?,
+            #[cfg(debug_assertions)]
             Event::Key(KeyEvent {
                 kind: KeyEventKind::Press,
                 code: KeyCode::Char('`'),
