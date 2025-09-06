@@ -7,7 +7,7 @@ use ratatui::{
 use tokio::sync::mpsc::Sender;
 use tui_input::{Input, backend::crossterm::EventHandler};
 
-use crate::{app::AppEvent, component::Component, ngored_error::NgoredError};
+use crate::{app::AppEvent, component::Component, config::Config, ngored_error::NgoredError};
 
 pub struct SublistComponent {
     app_event_sender: Sender<AppEvent>,
@@ -18,10 +18,10 @@ pub struct SublistComponent {
 }
 
 impl SublistComponent {
-    pub fn new(app_event_sender: Sender<AppEvent>) -> Self {
+    pub fn new(subs: Vec<String>, app_event_sender: Sender<AppEvent>) -> Self {
         SublistComponent {
             app_event_sender,
-            subs: Vec::default(),
+            subs: subs,
             list_state: ListState::default().with_selected(Some(0)),
             adding: false,
             sub_input: Input::default(),
@@ -51,6 +51,7 @@ impl Component for SublistComponent {
                     let new_sub = self.sub_input.value_and_reset();
                     if !new_sub.is_empty() && !self.subs.contains(&new_sub) {
                         self.subs.push(new_sub);
+                        Config::new(self.subs.clone()).save();
                         if self.list_state.selected().is_none() {
                             self.list_state.select(Some(0));
                         }
@@ -85,6 +86,7 @@ impl Component for SublistComponent {
                     KeyCode::Char('d') => {
                         if let Some(selected_index) = self.list_state.selected() {
                             self.subs.remove(selected_index);
+                            Config::new(self.subs.clone()).save();
                         }
                         self.app_event_sender.send(AppEvent::Draw).await?;
                     }

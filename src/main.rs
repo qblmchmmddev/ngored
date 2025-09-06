@@ -6,6 +6,7 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 
 mod app;
 mod component;
+mod config;
 mod model;
 mod ngored_error;
 mod reddit_api;

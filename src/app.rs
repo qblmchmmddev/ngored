@@ -10,6 +10,7 @@ use crate::component::debug::DebugComponent;
 
 use crate::{
     component::{Component, postlist::PostlistComponent, sublist::SublistComponent},
+    config::Config,
     ngored_error::NgoredError,
     reddit_api::RedditApi,
 };
@@ -44,6 +45,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         let reddit_api = Arc::new(RedditApi::new());
+        let config = Config::load();
         let (sender, receiver) = mpsc::channel(100);
         Self {
             #[cfg(debug_assertions)]
@@ -52,7 +54,7 @@ impl App {
             show_debug: false,
             running: true,
             current_screen: Screen::Sublist,
-            sublist: SublistComponent::new(sender.clone()),
+            sublist: SublistComponent::new(config.subs, sender.clone()),
             postlist: PostlistComponent::new(reddit_api.clone(), sender.clone()),
             app_event_sender: sender,
             app_event_receiver: receiver,
