@@ -110,7 +110,9 @@ impl Component for SublistComponent {
     fn draw(&mut self, frame: &mut ratatui::Frame) {
         let area = frame.area();
         let buf = frame.buffer_mut();
-        let selected_style = Style::new().bg(Color::Blue).add_modifier(Modifier::BOLD);
+        let selected_style = Style::new()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD);
         let list = List::new(self.subs.clone())
             .highlight_style(selected_style)
             .block(

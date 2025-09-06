@@ -6,6 +6,7 @@ use crate::ngored_error::NgoredError;
 #[cfg(debug_assertions)]
 pub mod debug;
 
+pub mod postdetail;
 pub mod postlist;
 pub mod sublist;
 

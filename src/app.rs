@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{DefaultTerminal, Frame};
+use ratatui_image::picker::{Picker, ProtocolType};
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio_stream::StreamExt;
 
@@ -9,8 +10,12 @@ use tokio_stream::StreamExt;
 use crate::component::debug::DebugComponent;
 
 use crate::{
-    component::{Component, postlist::PostlistComponent, sublist::SublistComponent},
+    component::{
+        Component, postdetail::PostDetailComponent, postlist::PostlistComponent,
+        sublist::SublistComponent,
+    },
     config::Config,
+    model::post::Post,
     ngored_error::NgoredError,
     reddit_api::RedditApi,
 };
@@ -22,11 +27,14 @@ pub enum AppEvent {
     ToggleShowDebug,
     OpenPostList(String),
     ClosePostList,
+    OpenPostDetail(Post),
+    ClosePostDetail,
 }
 
 pub enum Screen {
     Sublist,
     Postlist,
+    PostDetail,
 }
 
 pub struct App {
@@ -40,6 +48,7 @@ pub struct App {
     current_screen: Screen,
     sublist: SublistComponent,
     postlist: PostlistComponent,
+    postdetail: PostDetailComponent,
 }
 
 impl App {
@@ -47,6 +56,11 @@ impl App {
         let reddit_api = Arc::new(RedditApi::new());
         let config = Config::load();
         let (sender, receiver) = mpsc::channel(100);
+        let mut picker = Picker::from_query_stdio().unwrap();
+        if picker.protocol_type() != ProtocolType::Kitty {
+            picker = Picker::from_fontsize((8, 12));
+        }
+        let picker = Arc::new(picker);
         Self {
             #[cfg(debug_assertions)]
             debug_component: DebugComponent::new(),
@@ -56,6 +70,11 @@ impl App {
             current_screen: Screen::Sublist,
             sublist: SublistComponent::new(config.subs, sender.clone()),
             postlist: PostlistComponent::new(reddit_api.clone(), sender.clone()),
+            postdetail: PostDetailComponent::new(
+                reddit_api.clone(),
+                picker.clone(),
+                sender.clone(),
+            ),
             app_event_sender: sender,
             app_event_receiver: receiver,
         }
@@ -118,6 +137,15 @@ impl App {
                 self.current_screen = Screen::Sublist;
                 self.app_event_sender.send(AppEvent::Draw).await?;
             }
+            AppEvent::OpenPostDetail(post) => {
+                self.postdetail.load(post);
+                self.current_screen = Screen::PostDetail;
+                self.app_event_sender.send(AppEvent::Draw).await?;
+            }
+            AppEvent::ClosePostDetail => {
+                self.current_screen = Screen::Postlist;
+                self.app_event_sender.send(AppEvent::Draw).await?;
+            }
         };
         Ok(())
     }
@@ -126,6 +154,7 @@ impl App {
         match self.current_screen {
             Screen::Sublist => self.sublist.draw(frame),
             Screen::Postlist => self.postlist.draw(frame),
+            Screen::PostDetail => self.postdetail.draw(frame),
         }
     }
 
@@ -154,6 +183,7 @@ impl App {
                     match self.current_screen {
                         Screen::Sublist => self.sublist.handle_event(event).await?,
                         Screen::Postlist => self.postlist.handle_event(event).await?,
+                        Screen::PostDetail => self.postdetail.handle_event(event).await?,
                     };
                 }
 
@@ -161,6 +191,7 @@ impl App {
                 match self.current_screen {
                     Screen::Sublist => self.sublist.handle_event(event).await?,
                     Screen::Postlist => self.postlist.handle_event(event).await?,
+                    Screen::PostDetail => self.postdetail.handle_event(event).await?,
                 };
             }
         }

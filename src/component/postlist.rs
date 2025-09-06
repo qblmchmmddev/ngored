@@ -6,12 +6,11 @@ use std::{
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     layout::{Alignment, Constraint, Flex, Layout},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Stylize},
     text::{Line, Text},
-    widgets::{Block, BorderType, List, ListItem, Paragraph, StatefulWidget, Widget},
+    widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget},
 };
 use tokio::sync::mpsc::Sender;
-use tui_input::backend;
 use tui_widget_list::{ListBuilder, ListState, ListView};
 
 use crate::{
@@ -107,6 +106,14 @@ impl Component for PostlistComponent {
                     self.state.write().unwrap().list_state.previous();
                     self.app_event_sender.send(AppEvent::Draw).await?
                 }
+                'l' => {
+                    let state = self.state.read().unwrap();
+                    self.app_event_sender
+                        .send(AppEvent::OpenPostDetail(
+                            state.items[state.list_state.selected.unwrap_or(0)].clone(),
+                        ))
+                        .await?
+                }
                 _ => {}
             },
             _ => {}
@@ -136,7 +143,7 @@ impl Component for PostlistComponent {
                 let post = posts.get(ctx.index).unwrap();
                 let mut post_item = PostItem::new(post, width);
                 if ctx.is_selected {
-                    post_item.set_background(Color::Blue);
+                    post_item.set_background(Color::DarkGray);
                 }
                 let height = post_item.height();
                 (post_item, height as u16)

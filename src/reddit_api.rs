@@ -4,7 +4,7 @@ use serde_json::Value;
 
 #[derive(Debug, Clone)]
 pub struct RedditApi {
-    client: Client,
+    pub client: Client,
 }
 
 impl RedditApi {
@@ -51,6 +51,24 @@ pub struct PostData {
     pub score: i64,
     #[serde(default = "Vec::default")]
     pub crosspost_parent_list: Vec<PostData>,
+    pub preview: Option<Preview>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Preview {
+    pub images: Vec<Image>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Image {
+    pub resolutions: Vec<ImageResolution>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImageResolution {
+    pub url: String,
+    pub width: u16,
+    pub height: u16,
 }
 
 #[derive(Debug, Deserialize)]

@@ -10,8 +10,10 @@ dhat-heap = []
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 dhat = "0.3.3"
 dirs = "6.0.0"
+image = "0.25.8"
 log = "0.4.27"
 ratatui = "0.29.0"
+ratatui-image = { version = "8.0.1", features = ["crossterm"] }
 reqwest = { version = "0.12.23", features = ["json"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.143"
@@ -21,4 +23,5 @@ tokio-stream = "0.1.17"
 toml = "0.9.5"
 tui-input = { version = "0.14.0", features = ["crossterm"], default-features = false }
 tui-logger = "0.17.3"
+tui-scrollview = "0.5.1"
 tui-widget-list = "0.13.2"
