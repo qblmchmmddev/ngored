@@ -16,10 +16,10 @@ impl From<CommentData> for Comment {
             score: value.score,
             replies: value.replies.map_or(Vec::new(), |replies| {
                 replies
-                    .data
+                    .as_listing()
                     .children
                     .into_iter()
-                    .map(|comment_data| comment_data.data.into())
+                    .filter_map(|comment_data| comment_data.as_comment_opt().map(|v| v.into()))
                     .collect()
             }),
         }

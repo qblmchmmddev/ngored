@@ -18,6 +18,7 @@ use crate::{
     model::{comment::Comment, post::Post},
     ngored_error::NgoredError,
     reddit_api::RedditApi,
+    widget::comment_widget::CommentWidget,
 };
 
 pub struct PostDetailState {
@@ -108,10 +109,10 @@ impl PostDetailComponent {
                 {
                     let mut state = state.write().unwrap();
                     state.comments = comments
-                        .data
+                        .as_listing()
                         .children
                         .into_iter()
-                        .map(|d| Comment::from(d.data))
+                        .filter_map(|d| d.as_comment_opt().map(|v| Comment::from(v)))
                         .collect();
                     state.image = image;
                     state.loading = false;
@@ -203,10 +204,27 @@ impl Component for PostDetailComponent {
                 .into_iter()
                 .map(|i| Line::from(i))
                 .collect::<Vec<Line>>();
-            content_height += body_lines.len() as u16;
+            let body_height = body_lines.len() as u16;
+            content_height += body_height;
 
             let all_comments: Vec<(usize, Comment)> =
                 comments.into_iter().flat_map(|v| v.flatten(0)).collect();
+
+            let comment_widgets: Vec<CommentWidget> = all_comments
+                .into_iter()
+                .map(|i| {
+                    let (depth, comment) = i;
+                    let comment_widget = CommentWidget::new(
+                        depth as u16,
+                        comment,
+                        false,
+                        root_block_inner_no_scrollbar.width,
+                    );
+                    comment_widget
+                })
+                .collect();
+            let comments_height = comment_widgets.iter().fold(0, |a, b| a + b.height() as u16);
+            content_height += comments_height;
 
             let mut scrollview =
                 ScrollView::new(Size::new(root_block_inner.width, content_height as u16 + 2))
@@ -217,12 +235,14 @@ impl Component for PostDetailComponent {
                     .areas(scrollview_area);
             let scrollview_buf = scrollview.buf_mut();
 
-            let [title_area, _, image_area, _, body_area] = Layout::vertical([
+            let [title_area, _, image_area, _, body_area, _, comments_area] = Layout::vertical([
                 Constraint::Length(title_lines.len() as u16),
                 Constraint::Length(1),
                 Constraint::Length(image_size.height),
                 Constraint::Length(if image_size.height > 0 { 1 } else { 0 }),
-                Constraint::Fill(1),
+                Constraint::Length(body_height),
+                Constraint::Length(if body_height > 0 { 1 } else { 0 }),
+                Constraint::Length(comments_height),
             ])
             .areas(scrollview_area);
 
@@ -240,6 +260,16 @@ impl Component for PostDetailComponent {
             }
 
             Paragraph::new(body_lines).render(body_area, scrollview_buf);
+
+            let mut comments_area = comments_area;
+            comment_widgets.into_iter().for_each(|i| {
+                let [comment_area, remaining_comments_area] =
+                    Layout::vertical([Constraint::Length(i.height() as u16), Constraint::Fill(1)])
+                        .areas(comments_area);
+                i.render(comment_area, scrollview_buf);
+                comments_area = remaining_comments_area;
+            });
+
             scrollview.render(root_block_inner, root_buf, &mut state.scroll_state);
         }
     }

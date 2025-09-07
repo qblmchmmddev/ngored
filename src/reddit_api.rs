@@ -16,7 +16,7 @@ impl RedditApi {
         Self { client }
     }
 
-    pub async fn get_posts(&self, sub: &str) -> Content<ListingData<PostData>> {
+    pub async fn get_posts(&self, sub: &str) -> Data {
         self.client
             .get(format!("https://www.reddit.com/r/{}/best.json", sub))
             .query(&[("raw_json", "1")])
@@ -28,11 +28,7 @@ impl RedditApi {
             .unwrap()
     }
 
-    pub async fn get_post_comment(
-        &self,
-        sub: &str,
-        post_id: &str,
-    ) -> Content<ListingData<CommentData>> {
+    pub async fn get_post_comment(&self, sub: &str, post_id: &str) -> Data {
         let res: Vec<serde_json::Value> = self
             .client
             .get(format!("https://www.reddit.com/r/{}/{}.json", sub, post_id))
@@ -43,35 +39,62 @@ impl RedditApi {
             .json()
             .await
             .unwrap();
-        let comment_data: Content<ListingData<CommentData>> =
-            serde_json::from_value(res[1].clone()).unwrap();
-        comment_data
+        serde_json::from_value(res[1].clone()).unwrap()
     }
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Content<T> {
-    pub data: T,
+#[serde(tag = "kind", content = "data")]
+pub enum Data {
+    #[serde(rename = "t1")]
+    Comment(CommentData),
+    #[serde(rename = "t3")]
+    Post(PostData),
+    Listing(ListingData),
+    #[serde(rename = "more")]
+    More(MoreData),
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ListingData<T> {
-    pub children: Vec<Content<T>>,
-}
+impl Data {
+    fn variant_str(&self) -> &'static str {
+        match self {
+            Data::Comment(..) => "Comment",
+            Data::Post(..) => "Post",
+            Data::Listing(..) => "Listing",
+            Data::More(..) => "More",
+        }
+    }
 
-#[derive(Debug, Deserialize)]
-pub struct PostData {
-    pub id: String,
-    pub subreddit: String,
-    pub author: String,
-    pub title: String,
-    pub selftext: String,
-    pub url: String,
-    pub num_comments: u64,
-    pub score: i64,
-    #[serde(default = "Vec::default")]
-    pub crosspost_parent_list: Vec<PostData>,
-    pub preview: Option<Preview>,
+    pub fn as_post(self) -> PostData {
+        if let Data::Post(data) = self {
+            data
+        } else {
+            panic!("{} is not Post", self.variant_str())
+        }
+    }
+
+    pub fn as_listing(self) -> ListingData {
+        if let Data::Listing(data) = self {
+            data
+        } else {
+            panic!("{} is not Listing", self.variant_str())
+        }
+    }
+
+    pub fn as_comment(self) -> CommentData {
+        if let Data::Comment(data) = self {
+            data
+        } else {
+            panic!("{} is not Comment", self.variant_str())
+        }
+    }
+    pub fn as_comment_opt(self) -> Option<CommentData> {
+        if let Data::Comment(data) = self {
+            Some(data)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,18 +114,7 @@ pub struct ImageResolution {
     pub height: u16,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CommentData {
-    pub body: String,
-    pub author: String,
-    pub score: i64,
-    #[serde(default, deserialize_with = "deserialize_replies")]
-    pub replies: Option<Content<ListingData<CommentData>>>,
-}
-
-fn deserialize_replies<'de, D>(
-    deserializer: D,
-) -> Result<Option<Content<ListingData<CommentData>>>, D::Error>
+fn deserialize_replies<'de, D>(deserializer: D) -> Result<Option<Box<Data>>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -119,3 +131,65 @@ where
         Ok(None)
     }
 }
+
+#[derive(Debug, Deserialize)]
+pub struct MoreData {
+    pub count: u64,
+    pub children: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListingData {
+    pub children: Vec<Data>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PostData {
+    pub id: String,
+    pub subreddit: String,
+    pub author: String,
+    pub title: String,
+    pub selftext: String,
+    pub url: String,
+    pub num_comments: u64,
+    pub score: i64,
+    #[serde(default = "Vec::default")]
+    pub crosspost_parent_list: Vec<PostData>,
+    pub preview: Option<Preview>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommentData {
+    pub body: String,
+    pub author: String,
+    pub score: i64,
+    #[serde(default, deserialize_with = "deserialize_replies")]
+    pub replies: Option<Box<Data>>,
+}
+
+// impl<'de> Deserialize<'de> for ListingData<CommentData> {
+//     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+//     where
+//         D: Deserializer<'de>,
+//     {
+//         let value: Value = Value::deserialize(deserializer)?;
+
+//         let children = value
+//             .get("children")
+//             .and_then(|i| i.as_array())
+//             .ok_or_else(|| serde::de::Error::missing_field("children"))?;
+
+//         let mut comments = children
+//             .iter()
+//             .filter_map(|val| {
+//                 if val.get("kind").and_then(|v| v.as_str()) == Some("t1") {
+//                     serde_json::from_value(val.clone()).ok()
+//                 } else {
+//                     None
+//                 }
+//             })
+//             .collect();
+
+//         Ok(ListingData { children: comments })
+//     }
+// }

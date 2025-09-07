@@ -72,10 +72,10 @@ impl PostlistComponent {
                 {
                     let mut state = state.write().unwrap();
                     state.items = res
-                        .data
+                        .as_listing()
                         .children
                         .into_iter()
-                        .map(|i| Post::from(i.data))
+                        .map(|i| Post::from(i.as_post()))
                         .collect();
                     state.loading = false;
                     state.list_state.select(Some(0));
