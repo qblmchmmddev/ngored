@@ -27,6 +27,26 @@ impl RedditApi {
             .await
             .unwrap()
     }
+
+    pub async fn get_post_comment(
+        &self,
+        sub: &str,
+        post_id: &str,
+    ) -> Content<ListingData<CommentData>> {
+        let res: Vec<serde_json::Value> = self
+            .client
+            .get(format!("https://www.reddit.com/r/{}/{}.json", sub, post_id))
+            .query(&[("raw_json", "1")])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let comment_data: Content<ListingData<CommentData>> =
+            serde_json::from_value(res[1].clone()).unwrap();
+        comment_data
+    }
 }
 
 #[derive(Debug, Deserialize)]

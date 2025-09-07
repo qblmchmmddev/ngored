@@ -10,6 +10,7 @@ mod config;
 mod model;
 mod ngored_error;
 mod reddit_api;
+mod widget;
 
 #[tokio::main]
 async fn main() -> Result<(), NgoredError> {

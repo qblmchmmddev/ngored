@@ -13,7 +13,10 @@ use tokio::sync::mpsc::Sender;
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
 use crate::{
-    app::AppEvent, component::Component, model::post::Post, ngored_error::NgoredError,
+    app::AppEvent,
+    component::Component,
+    model::{comment::Comment, post::Post},
+    ngored_error::NgoredError,
     reddit_api::RedditApi,
 };
 
@@ -22,6 +25,7 @@ pub struct PostDetailState {
     post: Post,
     scroll_state: ScrollViewState,
     image: Option<StatefulProtocol>,
+    comments: Vec<Comment>,
 }
 
 pub struct PostDetailComponent {
@@ -42,6 +46,7 @@ impl PostDetailComponent {
             post: Post::default(),
             scroll_state: ScrollViewState::default(),
             image: None,
+            comments: Vec::default(),
         };
         Self {
             reddit_api,
@@ -65,6 +70,10 @@ impl PostDetailComponent {
             let reddit_api = self.reddit_api.clone();
             let app_event_sender = self.app_event_sender.clone();
             let picker = self.picker.clone();
+            let (sub, post_id) = {
+                let state = state.read().unwrap();
+                (state.post.subreddit.clone(), state.post.id.clone())
+            };
             async move {
                 {
                     let mut state = state.write().unwrap();
@@ -73,10 +82,9 @@ impl PostDetailComponent {
                 }
                 app_event_sender.send(AppEvent::Draw).await.unwrap();
 
-                debug!("a");
-                let image = {
+                let comments_future = reddit_api.get_post_comment(&sub, &post_id);
+                let image_future = async {
                     let i = state.read().unwrap().post.preview_image_url.clone();
-                    debug!("load iamge {:?}", i);
                     if let Some(image_url) = i {
                         let image_bytes = {
                             reddit_api
@@ -96,8 +104,15 @@ impl PostDetailComponent {
                         None
                     }
                 };
+                let (comments, image) = tokio::join!(comments_future, image_future,);
                 {
                     let mut state = state.write().unwrap();
+                    state.comments = comments
+                        .data
+                        .children
+                        .into_iter()
+                        .map(|d| Comment::from(d.data))
+                        .collect();
                     state.image = image;
                     state.loading = false;
                 }
@@ -137,55 +152,65 @@ impl Component for PostDetailComponent {
     fn draw(&mut self, frame: &mut ratatui::Frame) {
         let root_area = frame.area();
         let root_buf = frame.buffer_mut();
-        let (title, loading, body) = {
+        let (title, loading, body, comments) = {
             let state = self.state.read().unwrap();
             (
                 state.post.title.clone(),
                 state.loading,
                 state.post.body.clone(),
+                state.comments.clone(),
             )
         };
-        let block = Block::bordered().border_type(BorderType::Rounded);
-        let inner_block = block.inner(root_area);
-        block.render(root_area, root_buf);
+
+        let root_block = Block::bordered().border_type(BorderType::Rounded);
+        let root_block_inner = root_block.inner(root_area);
+        root_block.render(root_area, root_buf);
+
         if loading {
             let [center_vertically] = Layout::vertical([Constraint::Length(1)])
                 .flex(Flex::Center)
-                .areas(inner_block);
+                .areas(root_block_inner);
             let [center] = Layout::horizontal([Constraint::Length(10)])
                 .flex(Flex::Center)
                 .areas(center_vertically);
             Paragraph::new("Loading...").render(center, root_buf);
         } else {
-            let [inner_block_no_scrollbar, _] =
-                Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)]).areas(inner_block);
-            let mut height = 0;
-            let title_wrap = textwrap::wrap(&title, inner_block_no_scrollbar.width as usize - 1);
+            let [root_block_inner_no_scrollbar, _] =
+                Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)])
+                    .areas(root_block_inner);
 
+            let mut content_height = 0;
+
+            let title_wrap =
+                textwrap::wrap(&title, root_block_inner_no_scrollbar.width as usize - 1);
             let title_lines = title_wrap
                 .into_iter()
                 .map(|i| Line::from(i))
                 .collect::<Vec<Line>>();
-            height += title_lines.len() as u16;
+            content_height += title_lines.len() as u16;
 
             let image_size = if let Some(image) = &self.state.read().unwrap().image {
-                let [image_area] =
-                    Layout::vertical([Constraint::Percentage(50)]).areas(inner_block_no_scrollbar);
+                let [image_area] = Layout::vertical([Constraint::Percentage(50)])
+                    .areas(root_block_inner_no_scrollbar);
                 image.size_for(Resize::Scale(None), image_area)
             } else {
                 Rect::ZERO
             };
-            height += image_size.height;
+            content_height += image_size.height;
 
-            let body_wrap = textwrap::wrap(&body, inner_block_no_scrollbar.width as usize);
+            let body_wrap = textwrap::wrap(&body, root_block_inner_no_scrollbar.width as usize);
             let body_lines = body_wrap
                 .into_iter()
                 .map(|i| Line::from(i))
                 .collect::<Vec<Line>>();
-            height += body_lines.len() as u16;
+            content_height += body_lines.len() as u16;
 
-            let mut scrollview = ScrollView::new(Size::new(inner_block.width, height as u16 + 2))
-                .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
+            let all_comments: Vec<(usize, Comment)> =
+                comments.into_iter().flat_map(|v| v.flatten(0)).collect();
+
+            let mut scrollview =
+                ScrollView::new(Size::new(root_block_inner.width, content_height as u16 + 2))
+                    .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
             let scrollview_area = scrollview.area();
             let [scrollview_area, _for_scrollbar] =
                 Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)])
@@ -215,7 +240,7 @@ impl Component for PostDetailComponent {
             }
 
             Paragraph::new(body_lines).render(body_area, scrollview_buf);
-            scrollview.render(inner_block, root_buf, &mut state.scroll_state);
+            scrollview.render(root_block_inner, root_buf, &mut state.scroll_state);
         }
     }
 }
