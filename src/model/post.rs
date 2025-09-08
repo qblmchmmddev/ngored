@@ -36,25 +36,31 @@ impl From<PostData> for Post {
                     .first()
                     .map(|i| i.resolutions.iter().map(|i| i.url.clone()).collect())
             }),
-            galleries: value.gallery_data.map(|v| {
+            galleries: value.media_metadata.map(|v| {
                 v.items
-                    .iter()
-                    .map(|v| {
-                        value
-                            .media_metadata
-                            .as_ref()
-                            .unwrap()
-                            .items
-                            .get(&v.media_id)
-                            .unwrap()
-                            .p
-                            .last()
-                            .unwrap()
-                            .u
-                            .clone()
-                    })
+                    .values()
+                    .filter_map(|v| v.p.last().map(|v| v.u.clone()))
                     .collect()
             }),
+            // galleries: value.gallery_data.map(|v| {
+            //     v.items
+            //         .iter()
+            //         .map(|v| {
+            //             value
+            //                 .media_metadata
+            //                 .as_ref()
+            //                 .unwrap()
+            //                 .items
+            //                 .get(&v.media_id)
+            //                 .unwrap()
+            //                 .p
+            //                 .last()
+            //                 .unwrap()
+            //                 .u
+            //                 .clone()
+            //         })
+            //         .collect()
+            // }),
         }
     }
 }

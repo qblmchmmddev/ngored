@@ -13,6 +13,7 @@ dirs = "6.0.0"
 futures = "0.3.31"
 image = "0.25.8"
 log = "0.4.27"
+open = "5.3.2"
 ratatui = "0.29.0"
 ratatui-image = { version = "8.0.1", features = ["crossterm"] }
 reqwest = { version = "0.12.23", features = ["json"] }
