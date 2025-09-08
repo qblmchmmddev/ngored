@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use chrono::{DateTime, Utc};
+use chrono_humanize::HumanTime;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     layout::{Alignment, Constraint, Flex, Layout},
@@ -10,7 +12,7 @@ use ratatui::{
     text::{Line, Text},
     widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget},
 };
-use tokio::sync::mpsc::Sender;
+use tokio::{sync::mpsc::Sender, task::JoinHandle};
 use tui_widget_list::{ListBuilder, ListState, ListView};
 
 use crate::{
@@ -23,6 +25,7 @@ pub struct PostlistState {
     sub: String,
     items: Vec<Post>,
     list_state: ListState,
+    load_handle: Option<JoinHandle<()>>,
 }
 
 pub struct PostlistComponent {
@@ -38,6 +41,7 @@ impl PostlistComponent {
             sub: String::default(),
             items: Vec::default(),
             list_state: ListState::default(),
+            load_handle: None,
         };
         Self {
             reddit_api,
@@ -55,7 +59,7 @@ impl PostlistComponent {
         }
         self.state.write().unwrap().sub = sub.clone();
 
-        tokio::spawn({
+        self.state.write().unwrap().load_handle = Some(tokio::spawn({
             let state = self.state.clone();
             let reddit_api = self.reddit_api.clone();
             let app_event_sender = self.app_event_sender.clone();
@@ -82,7 +86,16 @@ impl PostlistComponent {
                 }
                 app_event_sender.send(AppEvent::Draw).await.unwrap();
             }
-        });
+        }));
+    }
+
+    fn reset(&self) {
+        let mut state = self.state.write().unwrap();
+        state.loading = false;
+        state.sub = String::default();
+        state.items.clear();
+        state.list_state = ListState::default();
+        state.load_handle = None;
     }
 }
 
@@ -95,7 +108,10 @@ impl Component for PostlistComponent {
                 ..
             }) => match char {
                 'h' => {
-                    self.state.write().unwrap().list_state.select(Some(0));
+                    if let Some(load_handle) = self.state.write().unwrap().load_handle.take() {
+                        load_handle.abort();
+                    }
+                    self.reset();
                     self.app_event_sender.send(AppEvent::ClosePostList).await?;
                 }
                 'j' => {
@@ -128,7 +144,7 @@ impl Component for PostlistComponent {
         let buf = frame.buffer_mut();
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .title(self.state.read().unwrap().sub.clone());
+            .title(format!("r/{}", self.state.read().unwrap().sub.clone()).italic());
         if self.state.read().unwrap().loading {
             block.render(area, buf);
             let text = Text::raw("Loading...");
@@ -170,6 +186,7 @@ pub struct PostItem {
     pub background: Option<Color>,
     pub score: i64,
     pub num_comments: u64,
+    pub created: DateTime<Utc>,
 }
 
 impl PostItem {
@@ -202,6 +219,7 @@ impl PostItem {
             background: None,
             score,
             num_comments,
+            created: post.created_at,
         }
     }
 
@@ -222,9 +240,11 @@ impl Widget for PostItem {
     where
         Self: Sized,
     {
+        let now = Utc::now();
+        let created = HumanTime::from(self.created - now);
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .title(format!("u/{}", self.username).italic())
+            .title(format!("u/{} • {}", self.username, created).italic())
             .title_bottom(format!("👍🏻{}", self.score.to_string()))
             .title_bottom(format!("💬{}", self.num_comments.to_string()));
 

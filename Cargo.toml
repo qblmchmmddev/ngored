@@ -7,6 +7,8 @@ edition = "2024"
 dhat-heap = []
 
 [dependencies]
+chrono = { version = "0.4.42", features = ["serde"] }
+chrono-humanize = "0.2.3"
 crossterm = { version = "0.29.0", features = ["event-stream"] }
 dhat = "0.3.3"
 dirs = "6.0.0"

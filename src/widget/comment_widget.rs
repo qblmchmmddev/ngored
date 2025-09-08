@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+use chrono_humanize::HumanTime;
 use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Stylize},
@@ -13,6 +15,7 @@ pub struct CommentWidget {
     is_selected: bool,
     author: String,
     score: i64,
+    created: DateTime<Utc>,
 }
 
 impl CommentWidget {
@@ -25,6 +28,7 @@ impl CommentWidget {
             is_selected: is_selected,
             author: comment.author.clone(),
             score: comment.score,
+            created: comment.created_at,
         }
     }
 
@@ -46,7 +50,11 @@ impl Widget for CommentWidget {
             Block::new()
                 .borders(Borders::LEFT | Borders::BOTTOM)
                 .border_type(BorderType::Rounded)
-                .title(self.author.bold())
+                // .title(self.author.bold())
+                .title(Line::from(vec![
+                    self.author.bold(),
+                    format!(" • {}", HumanTime::from(self.created - Utc::now())).italic(),
+                ]))
                 .title_bottom(format!("👍🏻{}", self.score)),
         );
         if self.is_selected {

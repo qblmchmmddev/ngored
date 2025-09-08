@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 use crate::reddit_api::PostData;
 
 #[derive(Debug, Default, Clone)]
@@ -13,6 +15,7 @@ pub struct Post {
     pub title: String,
     pub url: String,
     pub galleries: Option<Vec<String>>,
+    pub created_at: DateTime<Utc>,
 }
 
 impl From<PostData> for Post {
@@ -42,6 +45,7 @@ impl From<PostData> for Post {
                     .filter_map(|v| v.p.last().map(|v| v.u.clone()))
                     .collect()
             }),
+            created_at: DateTime::<Utc>::from_timestamp_secs(value.created_utc as i64).unwrap(),
             // galleries: value.gallery_data.map(|v| {
             //     v.items
             //         .iter()

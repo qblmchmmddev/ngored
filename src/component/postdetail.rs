@@ -3,6 +3,8 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use chrono::Utc;
+use chrono_humanize::HumanTime;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use futures::future::join_all;
 use log::debug;
@@ -10,7 +12,7 @@ use ratatui::{
     layout::{Constraint, Flex, Layout, Rect, Size},
     style::{Modifier, Stylize},
     text::Line,
-    widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget},
+    widgets::{Block, BorderType, Borders, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{Resize, StatefulImage, picker::Picker, protocol::StatefulProtocol};
 use tokio::{sync::mpsc::Sender, task::JoinHandle};
@@ -380,10 +382,15 @@ impl Component for PostDetailComponent {
     fn draw(&mut self, frame: &mut ratatui::Frame) {
         let root_area = frame.area();
         let root_buf = frame.buffer_mut();
-        let (title, body, comments, loading_comment) = {
+        let (sub, created, author, title, score, num_comments, body, comments, loading_comment) = {
             let state = self.state.read().unwrap();
             (
+                state.post.subreddit.clone(),
+                state.post.created_at.clone(),
+                state.post.author.clone(),
                 state.post.title.clone(),
+                state.post.score,
+                state.post.num_comments,
                 state.post.body.clone(),
                 state.comments.clone(),
                 state.loading_comment,
@@ -391,12 +398,20 @@ impl Component for PostDetailComponent {
         };
         let is_body_empty = body.is_empty();
 
-        let root_block = Block::bordered().border_type(BorderType::Rounded);
+        let root_block = Block::bordered().border_type(BorderType::Rounded).title(
+            format!(
+                "r/{} • u/{} • {}",
+                sub,
+                author,
+                HumanTime::from(created - Utc::now())
+            )
+            .italic(),
+        );
         let root_block_inner = root_block.inner(root_area);
         root_block.render(root_area, root_buf);
 
         let [root_block_inner_no_scrollbar, _] =
-            Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)])
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(2)])
                 .areas(root_block_inner);
 
         let mut content_height = 0;
@@ -507,12 +522,15 @@ impl Component for PostDetailComponent {
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)]).areas(scrollview_area);
         let scrollview_buf = scrollview.buf_mut();
 
+        content_height += 1; // for post info
+
         let [
             title_area,
             preview_image_area,
             crosspost_parents_area,
             gallery_image_area,
             body_area,
+            info_area,
             comments_area,
         ] = Layout::vertical([
             Constraint::Length(title_lines.len() as u16),
@@ -520,6 +538,7 @@ impl Component for PostDetailComponent {
             Constraint::Length(crosspost_parents_height),
             Constraint::Length(media_image_size.height),
             Constraint::Length(body_height),
+            Constraint::Length(1),
             Constraint::Length(comment_height),
         ])
         .areas(scrollview_area);
@@ -590,6 +609,11 @@ impl Component for PostDetailComponent {
         }
 
         Paragraph::new(body_lines).render(body_area, scrollview_buf);
+
+        Block::new()
+            .borders(Borders::BOTTOM)
+            .title_bottom(format!("👍🏻{} • 💬{}", score, num_comments))
+            .render(info_area, scrollview_buf);
 
         if loading_comment {
             let loading_comment_text = "Loading comment...";

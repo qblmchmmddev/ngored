@@ -160,6 +160,7 @@ pub struct PostData {
     pub preview: Option<Preview>,
     pub media_metadata: Option<MediaMetadata>,
     pub gallery_data: Option<GalleryData>,
+    pub created_utc: f64,
 }
 #[derive(Debug, Deserialize)]
 pub struct MediaMetadata {
@@ -198,6 +199,7 @@ pub struct CommentData {
     pub body: String,
     pub author: String,
     pub score: i64,
+    pub created_utc: f64,
     #[serde(default, deserialize_with = "deserialize_replies")]
     pub replies: Option<Box<Data>>,
 }

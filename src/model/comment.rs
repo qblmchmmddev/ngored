@@ -1,3 +1,5 @@
+use chrono::{DateTime, Utc};
+
 use crate::reddit_api::CommentData;
 
 #[derive(Clone)]
@@ -6,6 +8,7 @@ pub struct Comment {
     pub author: String,
     pub score: i64,
     pub replies: Vec<Comment>,
+    pub created_at: DateTime<Utc>,
 }
 
 impl From<CommentData> for Comment {
@@ -14,6 +17,7 @@ impl From<CommentData> for Comment {
             body: value.body,
             author: value.author,
             score: value.score,
+            created_at: DateTime::<Utc>::from_timestamp_secs(value.created_utc as i64).unwrap(),
             replies: value.replies.map_or(Vec::new(), |replies| {
                 replies
                     .as_listing()
