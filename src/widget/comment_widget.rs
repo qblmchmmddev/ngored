@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Stylize},
     text::Line,
-    widgets::{Block, BorderType, Paragraph, Widget},
+    widgets::{Block, BorderType, Borders, Paragraph, Widget},
 };
 
 use crate::model::comment::Comment;
@@ -43,10 +43,11 @@ impl Widget for CommentWidget {
                 .areas(area);
         let lines: Vec<Line> = self.body_texts.into_iter().map(|t| Line::from(t)).collect();
         let mut item = Paragraph::new(lines).block(
-            Block::bordered()
+            Block::new()
+                .borders(Borders::LEFT | Borders::BOTTOM)
                 .border_type(BorderType::Rounded)
                 .title(self.author.bold())
-                .title_bottom(format!("[{}]", self.score)),
+                .title_bottom(format!("👍🏻{}", self.score)),
         );
         if self.is_selected {
             item = item.fg(Color::Green);

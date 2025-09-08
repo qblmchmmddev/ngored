@@ -85,7 +85,13 @@ impl PostDetailComponent {
 
                 let comments_future = reddit_api.get_post_comment(&sub, &post_id);
                 let image_future = async {
-                    let i = state.read().unwrap().post.preview_image_url.clone();
+                    let i = state
+                        .read()
+                        .unwrap()
+                        .post
+                        .preview_image_urls
+                        .as_ref()
+                        .and_then(|v| v.last().map(|v| v.clone()));
                     if let Some(image_url) = i {
                         let image_bytes = {
                             reddit_api
@@ -142,6 +148,14 @@ impl Component for PostDetailComponent {
                 }
                 'k' => {
                     self.state.write().unwrap().scroll_state.scroll_up();
+                    self.app_event_sender.send(AppEvent::Draw).await?;
+                }
+                'J' => {
+                    self.state.write().unwrap().scroll_state.scroll_page_down();
+                    self.app_event_sender.send(AppEvent::Draw).await?;
+                }
+                'K' => {
+                    self.state.write().unwrap().scroll_state.scroll_page_up();
                     self.app_event_sender.send(AppEvent::Draw).await?;
                 }
                 _ => {}

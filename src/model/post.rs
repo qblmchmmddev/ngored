@@ -7,7 +7,7 @@ pub struct Post {
     pub crosspost_parent: Vec<Post>,
     pub id: String,
     pub num_comments: u64,
-    pub preview_image_url: Option<String>,
+    pub preview_image_urls: Option<Vec<String>>,
     pub score: i64,
     pub subreddit: String,
     pub title: String,
@@ -30,10 +30,10 @@ impl From<PostData> for Post {
                 .into_iter()
                 .map(Post::from)
                 .collect(),
-            preview_image_url: value.preview.and_then(|i| {
+            preview_image_urls: value.preview.and_then(|i| {
                 i.images
                     .first()
-                    .and_then(|i| i.resolutions.last().map(|i| i.url.clone()))
+                    .map(|i| i.resolutions.iter().map(|i| i.url.clone()).collect())
             }),
         }
     }

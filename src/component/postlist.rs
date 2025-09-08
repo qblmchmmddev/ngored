@@ -222,7 +222,7 @@ impl Widget for PostItem {
     {
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .title(self.username)
+            .title(format!("u/{}", self.username).italic())
             .title_bottom(format!("👍🏻{}", self.score.to_string()))
             .title_bottom(format!("💬{}", self.num_comments.to_string()));
 
