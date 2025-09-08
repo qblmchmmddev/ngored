@@ -1462,6 +1462,7 @@ dependencies = [
  "crossterm 0.29.0",
  "dhat",
  "dirs",
+ "futures",
  "image",
  "log",
  "ratatui",

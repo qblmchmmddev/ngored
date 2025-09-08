@@ -12,6 +12,7 @@ pub struct Post {
     pub subreddit: String,
     pub title: String,
     pub url: String,
+    pub galleries: Option<Vec<String>>,
 }
 
 impl From<PostData> for Post {
@@ -34,6 +35,25 @@ impl From<PostData> for Post {
                 i.images
                     .first()
                     .map(|i| i.resolutions.iter().map(|i| i.url.clone()).collect())
+            }),
+            galleries: value.gallery_data.map(|v| {
+                v.items
+                    .iter()
+                    .map(|v| {
+                        value
+                            .media_metadata
+                            .as_ref()
+                            .unwrap()
+                            .items
+                            .get(&v.media_id)
+                            .unwrap()
+                            .p
+                            .last()
+                            .unwrap()
+                            .u
+                            .clone()
+                    })
+                    .collect()
             }),
         }
     }

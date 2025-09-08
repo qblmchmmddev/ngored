@@ -4,6 +4,7 @@ use std::{
 };
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use futures::future::join_all;
 use log::debug;
 use ratatui::{
     layout::{Constraint, Flex, Layout, Rect, Size},
@@ -12,7 +13,7 @@ use ratatui::{
     widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{Resize, StatefulImage, picker::Picker, protocol::StatefulProtocol};
-use tokio::sync::mpsc::Sender;
+use tokio::{sync::mpsc::Sender, task::JoinHandle};
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
 use crate::{
@@ -27,8 +28,10 @@ use crate::{
 pub struct PostDetailState {
     post: Post,
     scroll_state: ScrollViewState,
-    image: Option<StatefulProtocol>,
+    preview_image: Option<StatefulProtocol>,
+    galleries: Option<(usize, Vec<StatefulProtocol>)>,
     comments: Vec<Comment>,
+    load_handle: Option<JoinHandle<()>>,
 }
 
 pub struct PostDetailComponent {
@@ -47,8 +50,10 @@ impl PostDetailComponent {
         let state = PostDetailState {
             post: Post::default(),
             scroll_state: ScrollViewState::default(),
-            image: None,
+            preview_image: None,
+            galleries: None,
             comments: Vec::default(),
+            load_handle: None,
         };
         Self {
             reddit_api,
@@ -67,7 +72,7 @@ impl PostDetailComponent {
         }
 
         self.state.write().unwrap().post = post;
-        tokio::spawn({
+        self.state.write().unwrap().load_handle = Some(tokio::spawn({
             let state = self.state.clone();
             let reddit_api = self.reddit_api.clone();
             let app_event_sender = self.app_event_sender.clone();
@@ -84,7 +89,13 @@ impl PostDetailComponent {
                 app_event_sender.send(AppEvent::Draw).await.unwrap();
 
                 tokio::join!(
-                    Self::load_image(
+                    Self::load_gallery_images(
+                        state.clone(),
+                        app_event_sender.clone(),
+                        reddit_api.clone(),
+                        picker.clone(),
+                    ),
+                    Self::load_preivew_image(
                         state.clone(),
                         app_event_sender.clone(),
                         reddit_api.clone(),
@@ -92,22 +103,23 @@ impl PostDetailComponent {
                     ),
                     Self::load_comments(
                         state.clone(),
-                        app_event_sender,
+                        app_event_sender.clone(),
                         &sub,
                         &post_id,
-                        reddit_api
+                        reddit_api.clone()
                     )
                 );
             }
-        });
+        }));
     }
 
-    async fn load_image(
+    async fn load_preivew_image(
         state: Arc<RwLock<PostDetailState>>,
         app_event_sender: Sender<AppEvent>,
         reddit_api: Arc<RedditApi>,
         picker: Arc<Picker>,
     ) {
+        debug!("load_preivew_image start");
         let i = state
             .read()
             .unwrap()
@@ -130,10 +142,43 @@ impl PostDetailComponent {
             let image_source = image::load_from_memory(&image_bytes).unwrap();
             {
                 let mut state = state.write().unwrap();
-                state.image = Some(picker.new_resize_protocol(image_source));
+                state.preview_image = Some(picker.new_resize_protocol(image_source));
             }
             app_event_sender.send(AppEvent::Draw).await.unwrap();
+        };
+        debug!("load_preivew_image end");
+    }
+
+    async fn load_gallery_images(
+        state: Arc<RwLock<PostDetailState>>,
+        app_event_sender: Sender<AppEvent>,
+        reddit_api: Arc<RedditApi>,
+        picker: Arc<Picker>,
+    ) {
+        debug!("load_gallery_images start");
+        let gallery_images = state.read().unwrap().post.galleries.clone();
+        if let Some(gallery_images) = gallery_images {
+            let gallery_images = gallery_images.into_iter().map(|v| async {
+                let image_bytes = {
+                    reddit_api
+                        .client
+                        .get(v)
+                        .send()
+                        .await
+                        .unwrap()
+                        .bytes()
+                        .await
+                        .unwrap()
+                };
+                let image_source = image::load_from_memory(&image_bytes).unwrap();
+                picker.new_resize_protocol(image_source)
+            });
+            let gallery_images = join_all(gallery_images).await;
+            state.write().unwrap().galleries = Some((0, gallery_images));
+
+            app_event_sender.send(AppEvent::Draw).await.unwrap();
         }
+        debug!("load_gallery_images end");
     }
 
     async fn load_comments(
@@ -143,23 +188,29 @@ impl PostDetailComponent {
         post_id: &str,
         reddit_api: Arc<RedditApi>,
     ) {
+        debug!("load_comments start");
         let comments = reddit_api.get_post_comment(sub, post_id).await;
         {
-            state.write().unwrap().comments = comments
+            let comments = comments
                 .as_listing()
                 .children
                 .into_iter()
                 .filter_map(|d| d.as_comment_opt().map(|v| Comment::from(v)))
                 .collect();
+            state.write().unwrap().comments = comments;
         }
         app_event_sender.send(AppEvent::Draw).await.unwrap();
+        debug!("load_comments end");
     }
 
     fn reset(&self) {
         let mut state = self.state.write().unwrap();
         state.post = Post::default();
-        state.image = None;
+        state.preview_image = None;
         state.comments.clear();
+        if let Some((_, mut galleries)) = state.galleries.take() {
+            galleries.clear();
+        };
     }
 }
 
@@ -172,6 +223,9 @@ impl Component for PostDetailComponent {
                 ..
             }) => match char {
                 'h' => {
+                    if let Some(load_handle) = self.state.write().unwrap().load_handle.take() {
+                        load_handle.abort();
+                    }
                     self.reset();
                     self.app_event_sender
                         .send(AppEvent::ClosePostDetail)
@@ -191,6 +245,25 @@ impl Component for PostDetailComponent {
                 }
                 'K' => {
                     self.state.write().unwrap().scroll_state.scroll_page_up();
+                    self.app_event_sender.send(AppEvent::Draw).await?;
+                }
+                '[' => {
+                    if let Some((index, images)) = self.state.write().unwrap().galleries.as_mut() {
+                        if *index == 0 {
+                            *index = images.len() - 1;
+                        } else {
+                            *index -= 1;
+                        }
+                    };
+                    self.app_event_sender.send(AppEvent::Draw).await?;
+                }
+                ']' => {
+                    if let Some((index, images)) = self.state.write().unwrap().galleries.as_mut() {
+                        *index += 1;
+                        if *index >= images.len() {
+                            *index = 0;
+                        }
+                    };
                     self.app_event_sender.send(AppEvent::Draw).await?;
                 }
                 _ => {}
@@ -215,110 +288,148 @@ impl Component for PostDetailComponent {
         let root_block_inner = root_block.inner(root_area);
         root_block.render(root_area, root_buf);
 
-        if false {
-            let [center_vertically] = Layout::vertical([Constraint::Length(1)])
-                .flex(Flex::Center)
+        let [root_block_inner_no_scrollbar, _] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)])
                 .areas(root_block_inner);
-            let [center] = Layout::horizontal([Constraint::Length(10)])
-                .flex(Flex::Center)
-                .areas(center_vertically);
-            Paragraph::new("Loading...").render(center, root_buf);
-        } else {
-            let [root_block_inner_no_scrollbar, _] =
-                Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)])
-                    .areas(root_block_inner);
 
-            let mut content_height = 0;
+        let mut content_height = 0;
 
-            let title_wrap =
-                textwrap::wrap(&title, root_block_inner_no_scrollbar.width as usize - 1);
-            let title_lines = title_wrap
-                .into_iter()
-                .map(|i| Line::from(i))
-                .collect::<Vec<Line>>();
-            content_height += title_lines.len() as u16;
+        let title_wrap = textwrap::wrap(&title, root_block_inner_no_scrollbar.width as usize - 1);
+        let title_lines = title_wrap
+            .into_iter()
+            .map(|i| Line::from(i))
+            .collect::<Vec<Line>>();
+        content_height += title_lines.len() as u16;
 
-            let image_size = if let Some(image) = &self.state.read().unwrap().image {
-                let [image_area] = Layout::vertical([Constraint::Percentage(50)])
+        let preview_image_size =
+            if let Some(preview_image) = &self.state.read().unwrap().preview_image {
+                let [preview_image_area] = Layout::vertical([Constraint::Percentage(50)])
                     .areas(root_block_inner_no_scrollbar);
-                image.size_for(Resize::Scale(None), image_area)
+                preview_image.size_for(Resize::Scale(None), preview_image_area)
             } else {
                 Rect::ZERO
             };
-            content_height += image_size.height;
+        content_height += preview_image_size.height;
 
-            let body_wrap = textwrap::wrap(&body, root_block_inner_no_scrollbar.width as usize);
-            let body_lines = body_wrap
-                .into_iter()
-                .map(|i| Line::from(i))
-                .collect::<Vec<Line>>();
-            let body_height = body_lines.len() as u16;
-            content_height += body_height;
+        let gallery_image_size =
+            if let Some((index, images)) = &self.state.read().unwrap().galleries {
+                let gallery_image = &images[*index];
+                let [gallery_image_area] = Layout::vertical([Constraint::Percentage(50)])
+                    .areas(root_block_inner_no_scrollbar);
+                let gallery_image_size =
+                    gallery_image.size_for(Resize::Scale(None), gallery_image_area);
+                Rect::new(
+                    gallery_image_size.x,
+                    gallery_image_size.y,
+                    gallery_image_size.width,
+                    gallery_image_size.height + 1,
+                ) // + 1 for image info
+            } else {
+                Rect::ZERO
+            };
+        content_height += gallery_image_size.height;
 
-            let all_comments: Vec<(usize, Comment)> =
-                comments.into_iter().flat_map(|v| v.flatten(0)).collect();
+        let body_wrap = textwrap::wrap(&body, root_block_inner_no_scrollbar.width as usize);
+        let body_lines = body_wrap
+            .into_iter()
+            .map(|i| Line::from(i))
+            .collect::<Vec<Line>>();
+        let body_height = body_lines.len() as u16;
+        content_height += body_height;
 
-            let comment_widgets: Vec<CommentWidget> = all_comments
-                .into_iter()
-                .map(|i| {
-                    let (depth, comment) = i;
-                    let comment_widget = CommentWidget::new(
-                        depth as u16,
-                        comment,
-                        false,
-                        root_block_inner_no_scrollbar.width,
-                    );
-                    comment_widget
-                })
-                .collect();
-            let comments_height = comment_widgets.iter().fold(0, |a, b| a + b.height() as u16);
-            content_height += comments_height;
+        let all_comments: Vec<(usize, Comment)> =
+            comments.into_iter().flat_map(|v| v.flatten(0)).collect();
 
-            let mut scrollview =
-                ScrollView::new(Size::new(root_block_inner.width, content_height as u16 + 2))
-                    .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
-            let scrollview_area = scrollview.area();
-            let [scrollview_area, _for_scrollbar] =
-                Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)])
-                    .areas(scrollview_area);
-            let scrollview_buf = scrollview.buf_mut();
+        let comment_widgets: Vec<CommentWidget> = all_comments
+            .into_iter()
+            .map(|i| {
+                let (depth, comment) = i;
+                let comment_widget = CommentWidget::new(
+                    depth as u16,
+                    comment,
+                    false,
+                    root_block_inner_no_scrollbar.width,
+                );
+                comment_widget
+            })
+            .collect();
+        let comments_height = comment_widgets.iter().fold(0, |a, b| a + b.height() as u16);
+        content_height += comments_height;
 
-            let [title_area, _, image_area, _, body_area, _, comments_area] = Layout::vertical([
-                Constraint::Length(title_lines.len() as u16),
-                Constraint::Length(1),
-                Constraint::Length(image_size.height),
-                Constraint::Length(if image_size.height > 0 { 1 } else { 0 }),
-                Constraint::Length(body_height),
-                Constraint::Length(if body_height > 0 { 1 } else { 0 }),
-                Constraint::Length(comments_height),
-            ])
-            .areas(scrollview_area);
+        let mut scrollview =
+            ScrollView::new(Size::new(root_block_inner.width, content_height as u16 + 2))
+                .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
+        let scrollview_area = scrollview.area();
+        let [scrollview_area, _for_scrollbar] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)]).areas(scrollview_area);
+        let scrollview_buf = scrollview.buf_mut();
 
-            Paragraph::new(title_lines)
-                .add_modifier(Modifier::BOLD)
-                .render(title_area, scrollview_buf);
+        let [
+            title_area,
+            _,
+            preview_image_area,
+            _,
+            gallery_image_area,
+            _,
+            body_area,
+            _,
+            comments_area,
+        ] = Layout::vertical([
+            Constraint::Length(title_lines.len() as u16),
+            Constraint::Length(1),
+            Constraint::Length(preview_image_size.height),
+            Constraint::Length(if preview_image_size.height > 0 { 1 } else { 0 }),
+            Constraint::Length(gallery_image_size.height),
+            Constraint::Length(if gallery_image_size.height > 0 { 1 } else { 0 }),
+            Constraint::Length(body_height),
+            Constraint::Length(if body_height > 0 { 1 } else { 0 }),
+            Constraint::Length(comments_height),
+        ])
+        .areas(scrollview_area);
 
-            let mut state = self.state.write().unwrap();
-            if let Some(image) = &mut state.image {
-                let [image_center] = Layout::horizontal([Constraint::Length(image_size.width)])
-                    .flex(Flex::Center)
-                    .areas(image_area);
-                let image_widget = StatefulImage::new().resize(Resize::Scale(None));
-                image_widget.render(image_center, scrollview_buf, image);
-            }
+        Paragraph::new(title_lines)
+            .add_modifier(Modifier::BOLD)
+            .render(title_area, scrollview_buf);
 
-            Paragraph::new(body_lines).render(body_area, scrollview_buf);
-
-            let mut comments_area = comments_area;
-            comment_widgets.into_iter().for_each(|i| {
-                let [comment_area, remaining_comments_area] =
-                    Layout::vertical([Constraint::Length(i.height() as u16), Constraint::Fill(1)])
-                        .areas(comments_area);
-                i.render(comment_area, scrollview_buf);
-                comments_area = remaining_comments_area;
-            });
-
-            scrollview.render(root_block_inner, root_buf, &mut state.scroll_state);
+        let mut state = self.state.write().unwrap();
+        if let Some(image) = &mut state.preview_image {
+            let [image_center] = Layout::horizontal([Constraint::Length(preview_image_size.width)])
+                .flex(Flex::Center)
+                .areas(preview_image_area);
+            let image_widget = StatefulImage::new().resize(Resize::Scale(None));
+            image_widget.render(image_center, scrollview_buf, image);
         }
+
+        if let Some((index, images)) = state.galleries.as_mut() {
+            let [gallery_image_area, gallery_info_area] =
+                Layout::vertical([Constraint::Fill(1), Constraint::Length(1)])
+                    .areas(gallery_image_area);
+
+            let [image_center] = Layout::horizontal([Constraint::Length(gallery_image_size.width)])
+                .flex(Flex::Center)
+                .areas(gallery_image_area);
+            let image_widget = StatefulImage::new().resize(Resize::Scale(None));
+            let image = &mut images[*index];
+            image_widget.render(image_center, scrollview_buf, image);
+
+            let info_text = format!("{}/{}", *index + 1, images.len());
+            let [info_center] = Layout::horizontal([Constraint::Length(info_text.len() as u16)])
+                .flex(Flex::Center)
+                .areas(gallery_info_area);
+            Paragraph::new(info_text).render(info_center, scrollview_buf);
+        }
+
+        Paragraph::new(body_lines).render(body_area, scrollview_buf);
+
+        let mut comments_area = comments_area;
+        comment_widgets.into_iter().for_each(|i| {
+            let [comment_area, remaining_comments_area] =
+                Layout::vertical([Constraint::Length(i.height() as u16), Constraint::Fill(1)])
+                    .areas(comments_area);
+            i.render(comment_area, scrollview_buf);
+            comments_area = remaining_comments_area;
+        });
+
+        scrollview.render(root_block_inner, root_buf, &mut state.scroll_state);
     }
 }

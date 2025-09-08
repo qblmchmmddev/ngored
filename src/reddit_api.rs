@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use reqwest::Client;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -156,6 +158,39 @@ pub struct PostData {
     #[serde(default = "Vec::default")]
     pub crosspost_parent_list: Vec<PostData>,
     pub preview: Option<Preview>,
+    pub media_metadata: Option<MediaMetadata>,
+    pub gallery_data: Option<GalleryData>,
+}
+#[derive(Debug, Deserialize)]
+pub struct MediaMetadata {
+    #[serde(flatten)]
+    pub items: HashMap<String, MediaItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MediaItem {
+    pub status: String,
+    pub e: String, // probably better as enum if only "Image"
+    pub m: String, // MIME type
+    pub p: Vec<MediaPreview>,
+    pub s: MediaPreview,
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MediaPreview {
+    pub y: u32,
+    pub x: u32,
+    pub u: String,
+}
+#[derive(Debug, Deserialize)]
+pub struct GalleryData {
+    pub items: Vec<GalleryItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GalleryItem {
+    pub media_id: String,
 }
 
 #[derive(Debug, Deserialize)]
