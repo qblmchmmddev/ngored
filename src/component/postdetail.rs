@@ -1,4 +1,7 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    ops::Deref,
+    sync::{Arc, RwLock},
+};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
 use log::debug;
@@ -22,7 +25,6 @@ use crate::{
 };
 
 pub struct PostDetailState {
-    loading: bool,
     post: Post,
     scroll_state: ScrollViewState,
     image: Option<StatefulProtocol>,
@@ -43,7 +45,6 @@ impl PostDetailComponent {
         app_event_sender: Sender<AppEvent>,
     ) -> Self {
         let state = PostDetailState {
-            loading: false,
             post: Post::default(),
             scroll_state: ScrollViewState::default(),
             image: None,
@@ -60,7 +61,7 @@ impl PostDetailComponent {
     pub fn load(&self, post: Post) {
         {
             let state = self.state.read().unwrap();
-            if state.post.id == post.id || state.loading {
+            if state.post.id == post.id {
                 return;
             }
         }
@@ -78,54 +79,87 @@ impl PostDetailComponent {
             async move {
                 {
                     let mut state = state.write().unwrap();
-                    state.loading = true;
                     state.scroll_state.scroll_to_top();
                 }
                 app_event_sender.send(AppEvent::Draw).await.unwrap();
 
-                let comments_future = reddit_api.get_post_comment(&sub, &post_id);
-                let image_future = async {
-                    let i = state
-                        .read()
-                        .unwrap()
-                        .post
-                        .preview_image_urls
-                        .as_ref()
-                        .and_then(|v| v.last().map(|v| v.clone()));
-                    if let Some(image_url) = i {
-                        let image_bytes = {
-                            reddit_api
-                                .clone()
-                                .client
-                                .get(image_url)
-                                .send()
-                                .await
-                                .unwrap()
-                                .bytes()
-                                .await
-                                .unwrap()
-                        };
-                        let image_source = image::load_from_memory(&image_bytes).unwrap();
-                        Some(picker.new_resize_protocol(image_source))
-                    } else {
-                        None
-                    }
-                };
-                let (comments, image) = tokio::join!(comments_future, image_future,);
-                {
-                    let mut state = state.write().unwrap();
-                    state.comments = comments
-                        .as_listing()
-                        .children
-                        .into_iter()
-                        .filter_map(|d| d.as_comment_opt().map(|v| Comment::from(v)))
-                        .collect();
-                    state.image = image;
-                    state.loading = false;
-                }
-                app_event_sender.send(AppEvent::Draw).await.unwrap();
+                tokio::join!(
+                    Self::load_image(
+                        state.clone(),
+                        app_event_sender.clone(),
+                        reddit_api.clone(),
+                        picker.clone(),
+                    ),
+                    Self::load_comments(
+                        state.clone(),
+                        app_event_sender,
+                        &sub,
+                        &post_id,
+                        reddit_api
+                    )
+                );
             }
         });
+    }
+
+    async fn load_image(
+        state: Arc<RwLock<PostDetailState>>,
+        app_event_sender: Sender<AppEvent>,
+        reddit_api: Arc<RedditApi>,
+        picker: Arc<Picker>,
+    ) {
+        let i = state
+            .read()
+            .unwrap()
+            .post
+            .preview_image_urls
+            .as_ref()
+            .and_then(|v| v.last().map(|v| v.clone()));
+        if let Some(image_url) = i {
+            let image_bytes = {
+                reddit_api
+                    .client
+                    .get(image_url)
+                    .send()
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap()
+            };
+            let image_source = image::load_from_memory(&image_bytes).unwrap();
+            {
+                let mut state = state.write().unwrap();
+                state.image = Some(picker.new_resize_protocol(image_source));
+            }
+            app_event_sender.send(AppEvent::Draw).await.unwrap();
+        }
+    }
+
+    async fn load_comments(
+        state: Arc<RwLock<PostDetailState>>,
+        app_event_sender: Sender<AppEvent>,
+        sub: &str,
+        post_id: &str,
+        reddit_api: Arc<RedditApi>,
+    ) {
+        let comments = reddit_api.get_post_comment(sub, post_id).await;
+        {
+            state.write().unwrap().comments = comments
+                .as_listing()
+                .children
+                .into_iter()
+                .filter_map(|d| d.as_comment_opt().map(|v| Comment::from(v)))
+                .collect();
+        }
+        app_event_sender.send(AppEvent::Draw).await.unwrap();
+    }
+
+    fn reset(&self) {
+        let mut state = self.state.write().unwrap();
+        state.post = Post::default();
+        state.image = None;
+        state.comments.clear();
     }
 }
 
@@ -138,6 +172,7 @@ impl Component for PostDetailComponent {
                 ..
             }) => match char {
                 'h' => {
+                    self.reset();
                     self.app_event_sender
                         .send(AppEvent::ClosePostDetail)
                         .await?;
@@ -167,11 +202,10 @@ impl Component for PostDetailComponent {
     fn draw(&mut self, frame: &mut ratatui::Frame) {
         let root_area = frame.area();
         let root_buf = frame.buffer_mut();
-        let (title, loading, body, comments) = {
+        let (title, body, comments) = {
             let state = self.state.read().unwrap();
             (
                 state.post.title.clone(),
-                state.loading,
                 state.post.body.clone(),
                 state.comments.clone(),
             )
@@ -181,7 +215,7 @@ impl Component for PostDetailComponent {
         let root_block_inner = root_block.inner(root_area);
         root_block.render(root_area, root_buf);
 
-        if loading {
+        if false {
             let [center_vertically] = Layout::vertical([Constraint::Length(1)])
                 .flex(Flex::Center)
                 .areas(root_block_inner);
