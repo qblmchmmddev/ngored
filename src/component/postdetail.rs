@@ -389,6 +389,7 @@ impl Component for PostDetailComponent {
                 state.loading_comment,
             )
         };
+        let is_body_empty = body.is_empty();
 
         let root_block = Block::bordered().border_type(BorderType::Rounded);
         let root_block_inner = root_block.inner(root_area);
@@ -400,7 +401,7 @@ impl Component for PostDetailComponent {
 
         let mut content_height = 0;
 
-        let title_wrap = textwrap::wrap(&title, root_block_inner_no_scrollbar.width as usize - 1);
+        let title_wrap = textwrap::wrap(&title, root_block_inner_no_scrollbar.width as usize);
         let title_lines = title_wrap
             .into_iter()
             .map(|i| Line::from(i))
@@ -460,7 +461,11 @@ impl Component for PostDetailComponent {
         };
         content_height += media_image_size.height;
 
-        let body_wrap = textwrap::wrap(&body, root_block_inner_no_scrollbar.width as usize);
+        let body_wrap = if is_body_empty {
+            Vec::default()
+        } else {
+            textwrap::wrap(&body, root_block_inner_no_scrollbar.width as usize)
+        };
         let body_lines = body_wrap
             .into_iter()
             .map(|i| Line::from(i))
@@ -504,27 +509,17 @@ impl Component for PostDetailComponent {
 
         let [
             title_area,
-            _,
             preview_image_area,
-            _,
             crosspost_parents_area,
-            _,
             gallery_image_area,
-            _,
             body_area,
-            _,
             comments_area,
         ] = Layout::vertical([
             Constraint::Length(title_lines.len() as u16),
-            Constraint::Length(1),
             Constraint::Length(preview_image_size.height),
-            Constraint::Length(if preview_image_size.height > 0 { 1 } else { 0 }),
             Constraint::Length(crosspost_parents_height),
-            Constraint::Length(if crosspost_parents_height > 0 { 1 } else { 0 }),
             Constraint::Length(media_image_size.height),
-            Constraint::Length(if media_image_size.height > 0 { 1 } else { 0 }),
             Constraint::Length(body_height),
-            Constraint::Length(if body_height > 0 { 1 } else { 0 }),
             Constraint::Length(comment_height),
         ])
         .areas(scrollview_area);
@@ -549,7 +544,7 @@ impl Component for PostDetailComponent {
                     let size = crosspost_parents_medias_sizes[index];
                     let (index, images) = crosspost_parent_medias;
 
-                    let [crosspost_parent_area, crosspost_info, remaining_area] =
+                    let [crosspost_parent_area, crosspost_info_area, remaining_area] =
                         Layout::vertical([
                             Constraint::Length(size.height - 1),
                             Constraint::Length(1),
@@ -569,7 +564,7 @@ impl Component for PostDetailComponent {
                     let [info_center] =
                         Layout::horizontal([Constraint::Length(info_text.len() as u16)])
                             .flex(Flex::Center)
-                            .areas(crosspost_info);
+                            .areas(crosspost_info_area);
                     Paragraph::new(info_text).render(info_center, scrollview_buf);
                 },
             );
