@@ -108,11 +108,13 @@ impl Component for PostlistComponent {
                 }
                 'l' => {
                     let state = self.state.read().unwrap();
-                    self.app_event_sender
-                        .send(AppEvent::OpenPostDetail(
-                            state.items[state.list_state.selected.unwrap_or(0)].clone(),
-                        ))
-                        .await?
+                    if let Some(selected_index) = state.list_state.selected {
+                        self.app_event_sender
+                            .send(AppEvent::OpenPostDetail(
+                                state.items[selected_index].clone(),
+                            ))
+                            .await?
+                    }
                 }
                 _ => {}
             },

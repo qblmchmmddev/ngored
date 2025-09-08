@@ -30,6 +30,7 @@ pub struct PostDetailState {
     scroll_state: ScrollViewState,
     preview_image: Option<StatefulProtocol>,
     medias: Option<(usize, Vec<StatefulProtocol>)>,
+    crosspost_parents_medias: Option<Vec<(usize, Vec<StatefulProtocol>)>>,
     loading_comment: bool,
     comments: Vec<Comment>,
     load_handle: Option<JoinHandle<()>>,
@@ -53,6 +54,7 @@ impl PostDetailComponent {
             scroll_state: ScrollViewState::default(),
             preview_image: None,
             medias: None,
+            crosspost_parents_medias: None,
             loading_comment: false,
             comments: Vec::default(),
             load_handle: None,
@@ -91,13 +93,19 @@ impl PostDetailComponent {
                 app_event_sender.send(AppEvent::Draw).await.unwrap();
 
                 tokio::join!(
-                    Self::load_gallery_images(
+                    Self::load_preivew_image(
                         state.clone(),
                         app_event_sender.clone(),
                         reddit_api.clone(),
                         picker.clone(),
                     ),
-                    Self::load_preivew_image(
+                    Self::load_crosspost_parent_medias(
+                        state.clone(),
+                        app_event_sender.clone(),
+                        reddit_api.clone(),
+                        picker.clone(),
+                    ),
+                    Self::load_gallery_images(
                         state.clone(),
                         app_event_sender.clone(),
                         reddit_api.clone(),
@@ -147,6 +155,60 @@ impl PostDetailComponent {
             }
             app_event_sender.send(AppEvent::Draw).await.unwrap();
         };
+    }
+
+    async fn load_crosspost_parent_medias(
+        state: Arc<RwLock<PostDetailState>>,
+        app_event_sender: Sender<AppEvent>,
+        reddit_api: Arc<RedditApi>,
+        picker: Arc<Picker>,
+    ) {
+        let crosspost_parents = state.read().unwrap().post.crosspost_parent.clone();
+        let crosspost_parents_medias = crosspost_parents.into_iter().filter_map(|mut v| {
+            if let Some(gallery_images) = v.galleries.take() {
+                let reddit_api = reddit_api.clone();
+                let picker = picker.clone();
+
+                let gallery_images = gallery_images.into_iter().map(move |v| {
+                    let reddit_api = reddit_api.clone();
+                    let picker = picker.clone();
+                    async move {
+                        let image_bytes = {
+                            reddit_api
+                                .client
+                                .get(v)
+                                .send()
+                                .await
+                                .unwrap()
+                                .bytes()
+                                .await
+                                .unwrap()
+                        };
+                        let image_source = image::load_from_memory(&image_bytes).unwrap();
+                        Some(picker.new_resize_protocol(image_source))
+                    }
+                });
+                Some(async move {
+                    join_all(gallery_images)
+                        .await
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                })
+            } else {
+                None
+            }
+        });
+
+        let crosspost_parents_medias = join_all(crosspost_parents_medias)
+            .await
+            .into_iter()
+            .map(|v| (0, v))
+            .collect();
+
+        state.write().unwrap().crosspost_parents_medias = Some(crosspost_parents_medias);
+
+        app_event_sender.send(AppEvent::Draw).await.unwrap();
     }
 
     async fn load_gallery_images(
@@ -215,6 +277,12 @@ impl PostDetailComponent {
         if let Some((_, mut galleries)) = state.medias.take() {
             galleries.clear();
         };
+        if let Some(mut crosspost_parents_medias) = state.crosspost_parents_medias.take() {
+            crosspost_parents_medias
+                .iter_mut()
+                .for_each(|(_, v)| v.clear());
+            crosspost_parents_medias.clear();
+        };
     }
 }
 
@@ -260,22 +328,47 @@ impl Component for PostDetailComponent {
                     self.app_event_sender.send(AppEvent::Draw).await?;
                 }
                 '[' => {
-                    if let Some((index, images)) = self.state.write().unwrap().medias.as_mut() {
+                    let mut state = self.state.write().unwrap();
+                    if let Some((index, images)) = state.medias.as_mut() {
                         if *index == 0 {
                             *index = images.len() - 1;
                         } else {
                             *index -= 1;
                         }
                     };
+                    if let Some(crosspost_parents_medias) = state.crosspost_parents_medias.as_mut()
+                    {
+                        crosspost_parents_medias
+                            .iter_mut()
+                            .for_each(|(index, images)| {
+                                if *index == 0 {
+                                    *index = images.len() - 1;
+                                } else {
+                                    *index -= 1;
+                                }
+                            });
+                    }
                     self.app_event_sender.send(AppEvent::Draw).await?;
                 }
                 ']' => {
-                    if let Some((index, images)) = self.state.write().unwrap().medias.as_mut() {
+                    let mut state = self.state.write().unwrap();
+                    if let Some((index, images)) = state.medias.as_mut() {
                         *index += 1;
                         if *index >= images.len() {
                             *index = 0;
                         }
                     };
+                    if let Some(crosspost_parents_medias) = state.crosspost_parents_medias.as_mut()
+                    {
+                        crosspost_parents_medias
+                            .iter_mut()
+                            .for_each(|(index, images)| {
+                                *index += 1;
+                                if *index >= images.len() {
+                                    *index = 0;
+                                }
+                            });
+                    }
                     self.app_event_sender.send(AppEvent::Draw).await?;
                 }
                 _ => {}
@@ -323,6 +416,33 @@ impl Component for PostDetailComponent {
                 Rect::ZERO
             };
         content_height += preview_image_size.height;
+
+        let crosspost_parents_medias_sizes = if let Some(crosspost_parents_medias) =
+            &self.state.read().unwrap().crosspost_parents_medias
+        {
+            crosspost_parents_medias
+                .iter()
+                .map(|(index, images)| {
+                    let media_image = &images[*index];
+                    let [media_image_area] = Layout::vertical([Constraint::Percentage(50)])
+                        .areas(root_block_inner_no_scrollbar);
+                    let media_image_size =
+                        media_image.size_for(Resize::Scale(None), media_image_area);
+                    Rect::new(
+                        media_image_size.x,
+                        media_image_size.y,
+                        media_image_size.width,
+                        media_image_size.height + 1,
+                    ) // + 1 for image index info
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::default()
+        };
+        let crosspost_parents_height = crosspost_parents_medias_sizes
+            .iter()
+            .fold(0, |a, b| a + b.height);
+        content_height += crosspost_parents_height;
 
         let media_image_size = if let Some((index, images)) = &self.state.read().unwrap().medias {
             let media_image = &images[*index];
@@ -387,6 +507,8 @@ impl Component for PostDetailComponent {
             _,
             preview_image_area,
             _,
+            crosspost_parents_area,
+            _,
             gallery_image_area,
             _,
             body_area,
@@ -397,6 +519,8 @@ impl Component for PostDetailComponent {
             Constraint::Length(1),
             Constraint::Length(preview_image_size.height),
             Constraint::Length(if preview_image_size.height > 0 { 1 } else { 0 }),
+            Constraint::Length(crosspost_parents_height),
+            Constraint::Length(if crosspost_parents_height > 0 { 1 } else { 0 }),
             Constraint::Length(media_image_size.height),
             Constraint::Length(if media_image_size.height > 0 { 1 } else { 0 }),
             Constraint::Length(body_height),
@@ -416,6 +540,39 @@ impl Component for PostDetailComponent {
                 .areas(preview_image_area);
             let image_widget = StatefulImage::new().resize(Resize::Scale(None));
             image_widget.render(image_center, scrollview_buf, image);
+        }
+
+        if let Some(crosspost_parents_medias) = &mut state.crosspost_parents_medias {
+            let mut crosspost_parents_area = crosspost_parents_area;
+            crosspost_parents_medias.iter_mut().enumerate().for_each(
+                |(index, crosspost_parent_medias)| {
+                    let size = crosspost_parents_medias_sizes[index];
+                    let (index, images) = crosspost_parent_medias;
+
+                    let [crosspost_parent_area, crosspost_info, remaining_area] =
+                        Layout::vertical([
+                            Constraint::Length(size.height - 1),
+                            Constraint::Length(1),
+                            Constraint::Fill(1),
+                        ])
+                        .areas(crosspost_parents_area);
+                    crosspost_parents_area = remaining_area;
+
+                    let [image_center] = Layout::horizontal([Constraint::Length(size.width)])
+                        .flex(Flex::Center)
+                        .areas(crosspost_parent_area);
+                    let image_widget = StatefulImage::new().resize(Resize::Scale(None));
+                    let image = &mut images[*index];
+                    image_widget.render(image_center, scrollview_buf, image);
+
+                    let info_text = format!("{}/{}", *index + 1, images.len());
+                    let [info_center] =
+                        Layout::horizontal([Constraint::Length(info_text.len() as u16)])
+                            .flex(Flex::Center)
+                            .areas(crosspost_info);
+                    Paragraph::new(info_text).render(info_center, scrollview_buf);
+                },
+            );
         }
 
         if let Some((index, images)) = state.medias.as_mut() {
