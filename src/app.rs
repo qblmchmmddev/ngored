@@ -1,9 +1,13 @@
 use std::{sync::Arc, time::Duration};
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind};
+use log::debug;
 use ratatui::{DefaultTerminal, Frame};
 use ratatui_image::picker::{Picker, ProtocolType};
-use tokio::sync::mpsc::{self, Receiver, Sender};
+use tokio::sync::{
+    mpsc::{self, Receiver, Sender},
+    oneshot,
+};
 use tokio_stream::StreamExt;
 
 #[cfg(debug_assertions)]
@@ -23,6 +27,7 @@ use crate::{
 pub enum AppEvent {
     Quit,
     Draw,
+    DrawWithCallback(oneshot::Sender<()>),
     #[cfg(debug_assertions)]
     ToggleShowDebug,
     OpenPostList(String),
@@ -122,6 +127,10 @@ impl App {
             AppEvent::Quit => self.running = false,
             AppEvent::Draw => {
                 terminal.draw(|frame| self.draw(frame))?;
+            }
+            AppEvent::DrawWithCallback(sender) => {
+                terminal.draw(|frame| self.draw(frame))?;
+                sender.send(()).unwrap();
             }
             #[cfg(debug_assertions)]
             AppEvent::ToggleShowDebug => {

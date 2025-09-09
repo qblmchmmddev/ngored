@@ -16,6 +16,7 @@ pub struct Post {
     pub url: String,
     pub galleries: Option<Vec<String>>,
     pub created_at: DateTime<Utc>,
+    pub video_url: Option<String>,
 }
 
 impl From<PostData> for Post {
@@ -46,6 +47,7 @@ impl From<PostData> for Post {
                     .collect()
             }),
             created_at: DateTime::<Utc>::from_timestamp_secs(value.created_utc as i64).unwrap(),
+            video_url: value.media.and_then(|v| v.reddit_video.map(|v| v.hls_url)),
             // galleries: value.gallery_data.map(|v| {
             //     v.items
             //         .iter()

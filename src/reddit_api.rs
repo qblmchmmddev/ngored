@@ -161,7 +161,18 @@ pub struct PostData {
     pub media_metadata: Option<MediaMetadata>,
     pub gallery_data: Option<GalleryData>,
     pub created_utc: f64,
+    pub media: Option<Media>,
 }
+#[derive(Debug, Deserialize)]
+pub struct Media {
+    pub reddit_video: Option<RedditVideo>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RedditVideo {
+    pub hls_url: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct MediaMetadata {
     #[serde(flatten)]
@@ -174,7 +185,7 @@ pub struct MediaItem {
     pub e: String, // probably better as enum if only "Image"
     pub m: String, // MIME type
     pub p: Vec<MediaPreview>,
-    pub s: MediaPreview,
+    // pub s: MediaPreview,
     pub id: String,
 }
 

@@ -1,5 +1,6 @@
 use std::{
     ops::Deref,
+    process::Stdio,
     sync::{Arc, RwLock},
 };
 
@@ -15,7 +16,11 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, StatefulWidget, Widget},
 };
 use ratatui_image::{Resize, StatefulImage, picker::Picker, protocol::StatefulProtocol};
-use tokio::{sync::mpsc::Sender, task::JoinHandle};
+use tokio::{
+    process::Command,
+    sync::{mpsc::Sender, oneshot},
+    task::JoinHandle,
+};
 use tui_scrollview::{ScrollView, ScrollViewState, ScrollbarVisibility};
 
 use crate::{
@@ -34,6 +39,7 @@ pub struct PostDetailState {
     medias: Option<(usize, Vec<StatefulProtocol>)>,
     crosspost_parents_medias: Option<Vec<(usize, Vec<StatefulProtocol>)>>,
     loading_comment: bool,
+    loading_video: bool,
     comments: Vec<Comment>,
     load_handle: Option<JoinHandle<()>>,
 }
@@ -58,6 +64,7 @@ impl PostDetailComponent {
             medias: None,
             crosspost_parents_medias: None,
             loading_comment: false,
+            loading_video: false,
             comments: Vec::default(),
             load_handle: None,
         };
@@ -276,6 +283,7 @@ impl PostDetailComponent {
         state.preview_image = None;
         state.comments.clear();
         state.loading_comment = false;
+        state.loading_video = false;
         if let Some((_, mut galleries)) = state.medias.take() {
             galleries.clear();
         };
@@ -290,6 +298,9 @@ impl PostDetailComponent {
 
 impl Component for PostDetailComponent {
     async fn handle_event(&mut self, event: &Event) -> Result<(), NgoredError> {
+        if self.state.read().unwrap().loading_video {
+            return Ok(());
+        }
         match event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char(char),
@@ -303,6 +314,31 @@ impl Component for PostDetailComponent {
                         state.post.subreddit, state.post.id
                     ))
                     .unwrap();
+                }
+                'v' => {
+                    let video_url = self.state.read().unwrap().post.video_url.clone();
+                    if let Some(video_url) = video_url {
+                        self.state.write().unwrap().loading_video = true;
+                        let (done_tx, done_rx) = oneshot::channel();
+                        self.app_event_sender
+                            .send(AppEvent::DrawWithCallback(done_tx))
+                            .await?;
+                        let state = self.state.clone();
+                        let app_event = self.app_event_sender.clone();
+                        tokio::spawn(async move {
+                            done_rx.await.unwrap();
+                            let mut mpv = Command::new("mpv")
+                                .arg(video_url)
+                                .stdin(Stdio::null())
+                                .stdout(Stdio::null())
+                                .stderr(Stdio::null())
+                                .spawn()
+                                .expect("failed to start mpv");
+                            mpv.wait().await.unwrap();
+                            state.write().unwrap().loading_video = false;
+                            app_event.send(AppEvent::Draw).await.unwrap();
+                        });
+                    }
                 }
                 'h' => {
                     if let Some(load_handle) = self.state.write().unwrap().load_handle.take() {
@@ -382,7 +418,19 @@ impl Component for PostDetailComponent {
     fn draw(&mut self, frame: &mut ratatui::Frame) {
         let root_area = frame.area();
         let root_buf = frame.buffer_mut();
-        let (sub, created, author, title, score, num_comments, body, comments, loading_comment) = {
+        let (
+            sub,
+            created,
+            author,
+            title,
+            score,
+            num_comments,
+            has_video_url,
+            body,
+            comments,
+            loading_comment,
+            loading_video,
+        ) = {
             let state = self.state.read().unwrap();
             (
                 state.post.subreddit.clone(),
@@ -391,22 +439,33 @@ impl Component for PostDetailComponent {
                 state.post.title.clone(),
                 state.post.score,
                 state.post.num_comments,
+                state.post.video_url.is_some(),
                 state.post.body.clone(),
                 state.comments.clone(),
                 state.loading_comment,
+                state.loading_video,
             )
         };
+        debug!("Draw loading vid: {}", loading_video);
         let is_body_empty = body.is_empty();
 
-        let root_block = Block::bordered().border_type(BorderType::Rounded).title(
-            format!(
+        let mut root_block = Block::bordered().border_type(BorderType::Rounded).title(
+            Line::from(format!(
                 "r/{} • u/{} • {}",
                 sub,
                 author,
                 HumanTime::from(created - Utc::now())
-            )
+            ))
+            .left_aligned()
             .italic(),
         );
+
+        if loading_video {
+            root_block = root_block.title(Line::from("Loading video...").right_aligned())
+        } else if has_video_url {
+            root_block = root_block.title(Line::from("[v] play video").right_aligned())
+        }
+
         let root_block_inner = root_block.inner(root_area);
         root_block.render(root_area, root_buf);
 
@@ -514,6 +573,8 @@ impl Component for PostDetailComponent {
             (Some(comment_widgets), comments_height)
         };
 
+        content_height += 1; // for post info
+
         let mut scrollview =
             ScrollView::new(Size::new(root_block_inner.width, content_height as u16 + 2))
                 .horizontal_scrollbar_visibility(ScrollbarVisibility::Never);
@@ -521,8 +582,6 @@ impl Component for PostDetailComponent {
         let [scrollview_area, _for_scrollbar] =
             Layout::horizontal([Constraint::Fill(1), Constraint::Length(1)]).areas(scrollview_area);
         let scrollview_buf = scrollview.buf_mut();
-
-        content_height += 1; // for post info
 
         let [
             title_area,
@@ -634,5 +693,15 @@ impl Component for PostDetailComponent {
         }
 
         scrollview.render(root_block_inner, root_buf, &mut state.scroll_state);
+        // if loading_video {
+        //     let text = "Loading video...";
+        //     let [center_v] = Layout::vertical([Constraint::Length(1)])
+        //         .flex(Flex::Center)
+        //         .areas(root_block_inner);
+        //     let [center] = Layout::horizontal([Constraint::Length(text.len() as u16)])
+        //         .flex(Flex::Center)
+        //         .areas(center_v);
+        //     Paragraph::new(text).render(center, root_buf);
+        // }
     }
 }
